@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import tkinter; import matplotlib; import numpy; print\\('tkinter OK'\\); print\\('matplotlib', matplotlib.__version__\\); print\\('numpy', numpy.__version__\\)\")",
+      "Bash(python -c \"import tkinter; print\\('tkinter OK'\\)\")",
+      "Bash(python -c \"import matplotlib; print\\('matplotlib', matplotlib.__version__\\)\")",
+      "Bash(python -c \"import numpy; print\\('numpy', numpy.__version__\\)\")",
+      "Bash(python -m pip list)",
+      "Bash(python -c \"import tkinter; print\\(tkinter.TkVersion\\)\")",
+      "Bash(dir /s /b \"d:\\\\\\\\2eme ing\\\\\\\\F.O\\\\\\\\TP2\")",
+      "Bash(pip install:*)",
+      "Bash(python -m venv .venv)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(mkdir -p physics utils)",
+      "Bash(touch physics/__init__.py utils/__init__.py)",
+      "Bash(.venv/Scripts/pip show:*)",
+      "Bash(.venv/Scripts/python -c \"import streamlit, numpy, plotly; print\\('OK'\\)\")",
+      "Bash(.venv/Scripts/python -c \"import streamlit, numpy, plotly; print\\('All packages OK'\\)\")",
+      "Bash(.venv/Scripts/python -c \"import app\")",
+      "Bash(.venv/Scripts/streamlit run:*)"
+    ]
+  }
+}
