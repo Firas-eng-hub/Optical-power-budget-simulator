@@ -123,13 +123,15 @@ with st.sidebar:
     col_cl, col_cd = st.columns(2)
     with col_cl:
         coupler_laser_db = st.number_input("Perte coupleur source-fibre (dB)",
-                                           min_value=0.0, max_value=20.0,
+                                           min_value=0.0, max_value=40.0,
                                            value=float(source_preset["coupler_db"]),
                                            step=0.1, format="%.1f")
     with col_cd:
         coupler_detect_db = st.number_input("Perte coupleur fibre-détecteur (dB)",
                                             min_value=0.0, max_value=20.0,
                                             value=1.0, step=0.1, format="%.1f")
+    injected_power_dbm = Pe_dbm - coupler_laser_db
+    st.caption(f"Puissance injectée dans la fibre = {injected_power_dbm:.2f} dBm")
 
     st.subheader("Connexions")
     col_nc, col_lc = st.columns(2)
@@ -243,6 +245,7 @@ with col_left:
         "Paramètre": [
             "Puissance émise Pe",
             "Coupleur source-fibre",
+            "Puissance injectée",
             "Atténuation fibre",
             f"Connecteurs ({Nc} × {loss_per_conn:.2f} dB)",
             f"Épissures ({Ns} × {loss_per_splice:.3f} dB)",
@@ -256,6 +259,7 @@ with col_left:
         "Valeur": [
             f"{Pe_dbm:.2f} dBm",
             f"{pb.coupler_loss_laser_db:.2f} dB",
+            f"{injected_power_dbm:.2f} dBm",
             f"{pb.A_fiber_db:.2f} dB",
             f"{pb.A_connectors_db:.2f} dB",
             f"{pb.A_splices_db:.2f} dB",
@@ -330,6 +334,8 @@ with tab0:
     fig_schema.add_annotation(x=1.3, y=4.5, text=f"λ = {lambda_nm:.0f} nm",
                               showarrow=False, font=dict(size=10, color="#AAFFCC"))
     fig_schema.add_annotation(x=1.3, y=3.85, text=f"Pe = {Pe_dbm:.1f} dBm",
+                              showarrow=False, font=dict(size=10, color="#AAFFCC"))
+    fig_schema.add_annotation(x=1.3, y=3.15, text=f"Pinj = {injected_power_dbm:.1f} dBm",
                               showarrow=False, font=dict(size=10, color="#AAFFCC"))
 
     fig_schema.add_shape(type="rect", x0=2.2, x1=7.8, y0=4.55, y1=5.45,
@@ -411,6 +417,7 @@ with tab0:
         st.markdown(f"- Pe = {Pe_dbm:.1f} dBm")
         st.markdown(f"- Δλ = {delta_lambda:.1f} nm")
         st.markdown(f"- Coupleur source-fibre = {coupler_laser_db:.1f} dB")
+        st.markdown(f"- P injectée = {injected_power_dbm:.1f} dBm")
     with col_f:
         st.markdown(f"**{fiber_label_disp}**")
         st.markdown(f"- L = {L_km:.1f} km")
@@ -495,6 +502,7 @@ with st.expander("📐 Formulaire — Rappel des équations"):
     st.markdown(r"""
 **Bilan de puissance**
 $$P_r = P_e - L_{couplage} - \alpha L - N_c L_c - N_s L_s - L_{autres} \quad \text{[dBm]}$$
+$$P_{inj} = P_e - L_{couplage}$$
 $$\text{Marge} = P_r - P_{sensibilité}$$
 
 **Catalogue exercice** : PIN = $-52$ dBm · PIIPN = $-64$ dBm
