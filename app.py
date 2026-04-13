@@ -3,11 +3,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-from physics.optics import sellmeier_index, group_index, numerical_aperture, relative_index_diff
 from physics.power_budget import LinkConfig, compute_power_budget, power_vs_distance
 from physics.dispersion import FiberType, DispersionConfig, compute_dispersion, dispersion_vs_distance
 from physics.link_length import compute_max_length
-from utils.units import nm_to_um
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -19,7 +17,7 @@ st.set_page_config(
 )
 
 st.title("Simulateur de Liaison Optique")
-st.caption("Bilan de puissance · Dispersion · Indice de réfraction — TP Fibre Optique")
+st.caption("Bilan de puissance · Dispersion — TP Fibre Optique")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -30,10 +28,35 @@ WAVELENGTH_PRESETS = {
     1550: {"alpha": 0.2, "Dch": 17.0},
 }
 
-FIBER_TYPES = {
-    "Monomode":   FiberType.SINGLE_MODE,
-    "Multimode":  FiberType.STEP_INDEX,
+SOURCE_PRESETS = {
+    "LED": {"Pe_dbm": 0.0, "coupler_db": 17.0, "delta_lambda_nm": 40.0},
+    "LASER": {"Pe_dbm": 10.0, "coupler_db": 3.0, "delta_lambda_nm": 2.0},
 }
+
+FIBER_CATALOG = {
+    "Multimode à saut d'indice": {
+        "type": FiberType.STEP_INDEX,
+        "alpha": 5.0,
+        "bandwidth_distance_MHz_km": 10.0,
+    },
+    "Multimode à gradient d'indice": {
+        "type": FiberType.GRADED_INDEX,
+        "alpha": 3.0,
+        "bandwidth_distance_MHz_km": 100.0,
+    },
+    "Monomode": {
+        "type": FiberType.SINGLE_MODE,
+        "alpha": 0.5,
+        "bandwidth_distance_MHz_km": 0.0,
+    },
+}
+
+FIBER_TYPES = {
+    label: data["type"] for label, data in FIBER_CATALOG.items()
+}
+
+DEFAULT_N1 = 1.468
+DEFAULT_DELTA = 0.01
 
 
 def fmt(val, decimals=2, unit=""):
@@ -80,6 +103,7 @@ def slider_input(label: str, min_val: float, max_val: float, default: float,
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.header("⚙️ Paramètres")
+    use_exercise_catalog = st.checkbox("Utiliser le catalogue de l'exercice", value=True)
 
     # --- Emetteur ---
     st.subheader("Émetteur optique")
@@ -94,77 +118,94 @@ with st.sidebar:
         default_alpha = WAVELENGTH_PRESETS[lambda_choice]["alpha"]
         default_Dch = WAVELENGTH_PRESETS[lambda_choice]["Dch"]
 
-    Pe_dbm = slider_input("Puissance émise Pe (dBm)", -20.0, 10.0, -3.0, 0.5,
-                          "Pe_dbm", "%.1f")
-    delta_lambda = slider_input("Largeur spectrale Δλ (nm)", 0.1, 50.0, 1.0, 0.1,
-                                "delta_lambda", "%.2f")
+    if use_exercise_catalog:
+        source_type = st.radio("Source", ["LED", "LASER"], horizontal=True)
+        source_preset = SOURCE_PRESETS[source_type]
+        col_pe, col_dl = st.columns(2)
+        with col_pe:
+            Pe_dbm = st.number_input("Puissance émise Pe (dBm)", min_value=-20.0, max_value=20.0,
+                                     value=float(source_preset["Pe_dbm"]), step=0.5, format="%.1f")
+        with col_dl:
+            delta_lambda = st.number_input("Largeur spectrale Δλ (nm)", min_value=0.1, max_value=100.0,
+                                           value=float(source_preset["delta_lambda_nm"]), step=0.1, format="%.1f")
+        st.caption(f"Perte de couplage par défaut = {source_preset['coupler_db']:.1f} dB")
+    else:
+        source_type = "Manuel"
+        source_preset = None
+        Pe_dbm = slider_input("Puissance émise Pe (dBm)", -20.0, 10.0, -3.0, 0.5,
+                              "Pe_dbm", "%.1f")
+        delta_lambda = slider_input("Largeur spectrale Δλ (nm)", 0.1, 50.0, 1.0, 0.1,
+                                    "delta_lambda", "%.2f")
 
     # --- Fibre ---
     st.subheader("Fibre optique")
     fiber_label = st.selectbox("Type de fibre", list(FIBER_TYPES.keys()))
     fiber_type = FIBER_TYPES[fiber_label]
+    fiber_catalog = FIBER_CATALOG[fiber_label]
 
     L_km = slider_input("Longueur L (km)", 0.1, 300.0, 15.0, 0.1, "L_km", "%.1f")
 
     col_a, col_b = st.columns(2)
     with col_a:
+        alpha_default = fiber_catalog["alpha"] if use_exercise_catalog else default_alpha
         alpha = st.number_input("α (dB/km)", min_value=0.01, max_value=10.0,
-                                value=default_alpha, step=0.05, format="%.3f")
+                                value=alpha_default, step=0.05, format="%.3f")
     with col_b:
         Dch = st.number_input("Dch (ps/nm/km)", min_value=-200.0, max_value=200.0,
                               value=default_Dch, step=1.0)
-
-    col_n1, col_n2 = st.columns(2)
-    with col_n1:
-        n1 = st.number_input("n₁ (cœur)", min_value=1.3, max_value=1.6,
-                             value=1.468, step=0.001, format="%.4f")
-    with col_n2:
-        if fiber_type == FiberType.SINGLE_MODE:
-            n2 = st.number_input("n₂ (gaine)", min_value=1.3, max_value=1.6,
-                                 value=1.452, step=0.001, format="%.4f", disabled=True)
-        else:
-            n2 = st.number_input("n₂ (gaine)", min_value=1.3, max_value=1.6,
-                                 value=1.452, step=0.001, format="%.4f")
-
-    NA = numerical_aperture(n1, n2)
-    delta_n = relative_index_diff(n1, n2)
-    st.caption(f"ON = {NA:.4f}   |   Δ = {delta_n:.5f}")
+    bandwidth_distance_MHz_km = fiber_catalog["bandwidth_distance_MHz_km"] if use_exercise_catalog else 0.0
+    if bandwidth_distance_MHz_km > 0:
+        st.caption(f"Produit bande passante-distance = {bandwidth_distance_MHz_km:.1f} MHz·km")
 
     # --- Coupleurs ---
     st.subheader("Coupleurs")
     col_cl, col_cd = st.columns(2)
     with col_cl:
-        coupler_laser_db = st.number_input("Perte coupleur laser-fibre (dB)",
-                                           min_value=0.0, max_value=20.0, value=2.0,
+        coupler_laser_default = source_preset["coupler_db"] if use_exercise_catalog else 2.0
+        coupler_laser_db = st.number_input("Perte coupleur source-fibre (dB)",
+                                           min_value=0.0, max_value=20.0, value=coupler_laser_default,
                                            step=0.1, format="%.1f")
     with col_cd:
         coupler_detect_db = st.number_input("Perte coupleur fibre-détecteur (dB)",
-                                            min_value=0.0, max_value=20.0, value=2.5,
+                                            min_value=0.0, max_value=20.0,
+                                            value=1.0 if use_exercise_catalog else 2.5,
                                             step=0.1, format="%.1f")
 
     # --- Connexions ---
     st.subheader("Connexions")
     col_nc, col_lc = st.columns(2)
     with col_nc:
-        Nc = st.number_input("Nb connecteurs", min_value=0, max_value=50, value=5, step=1)
+        Nc = st.number_input("Nb connecteurs", min_value=0, max_value=50,
+                             value=2 if use_exercise_catalog else 5, step=1)
     with col_lc:
         loss_per_conn = st.number_input("Perte/connecteur (dB)", min_value=0.0,
                                         max_value=5.0, value=1.0, step=0.1, format="%.2f")
 
-    splice_mode = st.radio("Épissures", ["Manuel (Ns)", "Espacement (m)"], horizontal=True)
+    splice_mode = st.radio("Épissures", ["Manuel (Ns)", "Espacement (m)", "Rouleaux (km)"], horizontal=True)
     if splice_mode == "Manuel (Ns)":
-        Ns = st.number_input("Nb épissures", min_value=0, max_value=500, value=50, step=1)
-    else:
+        Ns = st.number_input("Nb épissures", min_value=0, max_value=500,
+                             value=11 if use_exercise_catalog else 50, step=1)
+    elif splice_mode == "Espacement (m)":
         splice_spacing_m = st.number_input("Espacement épissures (m)",
                                            min_value=10, max_value=5000, value=200, step=10)
         Ns = max(0, int(L_km * 1000 / splice_spacing_m) - 1)
         st.caption(f"→ Ns = {Ns} épissures pour L = {L_km:.1f} km")
+    else:
+        reel_length_km = st.number_input("Longueur d'un rouleau (km)",
+                                         min_value=0.1, max_value=50.0,
+                                         value=1.0 if use_exercise_catalog else 2.0,
+                                         step=0.1, format="%.1f")
+        Ns = max(0, int(np.ceil(L_km / reel_length_km)) - 1)
+        st.caption(f"→ Ns = {Ns} épissures pour des rouleaux de {reel_length_km:.1f} km")
     loss_per_splice = st.number_input("Perte/épissure (dB)", min_value=0.0,
-                                      max_value=2.0, value=0.1, step=0.01, format="%.3f")
+                                      max_value=2.0, value=0.3 if use_exercise_catalog else 0.1,
+                                      step=0.01, format="%.3f")
+    other_losses_db = st.number_input("Autres pertes (dB)", min_value=0.0,
+                                      max_value=50.0, value=0.0, step=0.1, format="%.1f")
 
     # --- Récepteur ---
     st.subheader("Récepteur")
-    detector = st.radio("Type de détecteur", ["PIN", "APD", "Manuel"], horizontal=True)
+    detector = st.radio("Type de détecteur", ["PIN", "PIIPN", "Manuel"], horizontal=True)
     if detector == "Manuel":
         sensitivity_manual = st.number_input("Sensibilité (dBm)", min_value=-80.0,
                                              max_value=0.0, value=-40.0, step=0.5)
@@ -172,9 +213,11 @@ with st.sidebar:
     else:
         sensitivity_override = None
     bitrate_GHz = st.number_input("Débit (GHz)", min_value=0.001, max_value=100.0,
-                                  value=2.488, step=0.001, format="%.3f")
+                                  value=0.002 if use_exercise_catalog else 2.488,
+                                  step=0.001, format="%.3f")
     BP_target = st.number_input("BP cible (GHz)", min_value=0.001, max_value=100.0,
-                                value=2.488, step=0.1, format="%.3f")
+                                value=0.002 if use_exercise_catalog else 2.488,
+                                step=0.001, format="%.3f")
 
 # ---------------------------------------------------------------------------
 # Computation
@@ -190,7 +233,8 @@ link_cfg = LinkConfig(
     loss_per_splice_db=float(loss_per_splice),
     coupler_loss_laser_db=float(coupler_laser_db),
     coupler_loss_detector_db=float(coupler_detect_db),
-    NA=NA,
+    other_losses_db=float(other_losses_db),
+    NA=0.0,
     detector=detector,
     bitrate_GHz=bitrate_GHz,
     sensitivity_override_dbm=sensitivity_override,
@@ -201,16 +245,14 @@ disp_cfg = DispersionConfig(
     delta_lambda_nm=delta_lambda,
     L_km=L_km,
     fiber_type=fiber_type,
-    n1=n1,
-    delta=delta_n,
+    n1=DEFAULT_N1,
+    delta=DEFAULT_DELTA,
+    bandwidth_distance_MHz_km=bandwidth_distance_MHz_km,
 )
 
 pb = compute_power_budget(link_cfg)
 disp = compute_dispersion(disp_cfg)
 lmax = compute_max_length(link_cfg, disp_cfg, BP_target)
-
-n_at_lambda = float(sellmeier_index(nm_to_um(lambda_nm)))
-ng_at_lambda = group_index(nm_to_um(lambda_nm))
 
 # ---------------------------------------------------------------------------
 # Row 1 — Key metrics
@@ -232,8 +274,11 @@ with c2:
 with c3:
     bp_val = disp.bandwidth_GHz
     bp_str = "∞ GHz" if bp_val == float('inf') else f"{bp_val:.3f} GHz"
+    bp_delta = f"Δτ total: {disp.delta_tau_total_ps:.1f} ps"
+    if disp.bandwidth_vendor_GHz != float('inf'):
+        bp_delta = f"Limite catalogue: {disp.bandwidth_vendor_GHz:.3f} GHz"
     st.metric("Bande passante BP", bp_str,
-              delta=f"Δτ total: {disp.delta_tau_total_ps:.1f} ps",
+              delta=bp_delta,
               delta_color="off")
 
 with c4:
@@ -258,6 +303,7 @@ with col_left:
             f"Connecteurs ({Nc} × {loss_per_conn:.2f} dB)",
             f"Épissures ({Ns} × {loss_per_splice:.3f} dB)",
             "Coupleur fibre-détecteur",
+            "Autres pertes",
             "Perte totale",
             "Puissance reçue Pr",
             "Sensibilité détecteur",
@@ -270,6 +316,7 @@ with col_left:
             f"{pb.A_connectors_db:.2f} dB",
             f"{pb.A_splices_db:.2f} dB",
             f"{pb.coupler_loss_detector_db:.2f} dB",
+            f"{pb.other_losses_db:.2f} dB",
             f"{pb.A_total_db:.2f} dB",
             f"{pb.Pr_dbm:.2f} dBm",
             f"{pb.sensitivity_dbm:.2f} dBm",
@@ -285,12 +332,16 @@ with col_right:
             "Δτ chromatique",
             "Δτ modal",
             "Δτ total (RMS)",
+            "BP modèle",
+            "BP catalogue",
             "Bande passante BP",
         ],
         "Valeur": [
             f"{disp.delta_tau_ch_ps:.2f} ps",
             f"{disp.delta_tau_modal_ps:.2f} ps",
             f"{disp.delta_tau_total_ps:.2f} ps",
+            "∞ GHz" if disp.bandwidth_model_GHz == float('inf') else f"{disp.bandwidth_model_GHz:.3f} GHz",
+            "∞ GHz" if disp.bandwidth_vendor_GHz == float('inf') else f"{disp.bandwidth_vendor_GHz:.3f} GHz",
             bp_str,
         ],
     }
@@ -305,13 +356,6 @@ with col_right:
     }
     st.table(lmax_data)
 
-    st.subheader("Indice de réfraction")
-    idx_data = {
-        "Grandeur": ["n(λ) Sellmeier", "Indice de groupe ng", "ON calculé"],
-        "Valeur": [f"{n_at_lambda:.5f}", f"{ng_at_lambda:.5f}", f"{NA:.4f}"],
-    }
-    st.table(idx_data)
-
 # ---------------------------------------------------------------------------
 # Row 3 — Plots
 # ---------------------------------------------------------------------------
@@ -320,14 +364,18 @@ L_plot = np.linspace(0.1, max(200.0, L_km * 2, lmax.L_max_km * 1.3 if lmax.L_max
 Pr_arr = power_vs_distance(link_cfg, L_plot)
 tau_arr, bw_arr = dispersion_vs_distance(disp_cfg, L_plot)
 
-tab0, tab1, tab2, tab3 = st.tabs(["🔗 Schéma de liaison", "📶 Puissance vs Distance", "〰️ Dispersion vs Distance", "🔬 Indice n(λ)"])
+tab0, tab1, tab2 = st.tabs(["🔗 Schéma de liaison", "📶 Puissance vs Distance", "〰️ Dispersion vs Distance"])
 
 # ---- Tab 0: Link schema ----
 with tab0:
     is_monomode = (fiber_type == FiberType.SINGLE_MODE)
-    fiber_label_disp = "Fibre Monomode" if is_monomode else "Fibre Multimode"
+    if fiber_type == FiberType.GRADED_INDEX:
+        fiber_label_disp = "Fibre Multimode à gradient d'indice"
+    elif fiber_type == FiberType.STEP_INDEX:
+        fiber_label_disp = "Fibre Multimode à saut d'indice"
+    else:
+        fiber_label_disp = "Fibre Monomode"
     fiber_color = "#4A90D9" if is_monomode else "#E8A838"
-    fiber_core_label = "Cœur ~9 µm" if is_monomode else "Cœur ~50 µm"
 
     fig_schema = go.Figure()
 
@@ -341,7 +389,7 @@ with tab0:
     fig_schema.add_annotation(x=1.3, y=6.85, text="<b>ÉMETTEUR</b>",
                                showarrow=False, font=dict(size=12, color="#1A6B3C"))
     # Source type label
-    src_label = "Laser (LD)" if is_monomode else "LED"
+    src_label = source_type if source_type != "Manuel" else ("Laser (LD)" if is_monomode else "LED")
     fig_schema.add_annotation(x=1.3, y=5.15, text=f"<b>{src_label}</b>",
                                showarrow=False, font=dict(size=11, color="white"))
     # Lambda & Pe labels inside emitter
@@ -369,9 +417,8 @@ with tab0:
     fig_schema.add_annotation(x=5.0, y=5.75,
                                text=f"<b>{fiber_label_disp}</b> — L = {L_km:.1f} km   α = {alpha:.3f} dB/km",
                                showarrow=False, font=dict(size=11, color="#333"))
-    # Core size label below
     fig_schema.add_annotation(x=5.0, y=4.25,
-                               text=f"{fiber_core_label}   |   n₁ = {n1:.4f}   n₂ = {n2:.4f}   ON = {NA:.4f}",
+                               text="Chaîne optique de transmission",
                                showarrow=False, font=dict(size=10, color="#555"))
 
     # Connector markers
@@ -458,7 +505,7 @@ with tab0:
     col_e, col_f, col_r = st.columns(3)
     with col_e:
         st.markdown("**Émetteur**")
-        st.markdown(f"- Source : {'Laser (LD)' if is_monomode else 'LED'}")
+        st.markdown(f"- Source : {src_label}")
         st.markdown(f"- λ = {lambda_nm:.0f} nm")
         st.markdown(f"- Pe = {Pe_dbm:.1f} dBm")
         st.markdown(f"- Δλ = {delta_lambda:.1f} nm")
@@ -468,8 +515,11 @@ with tab0:
         st.markdown(f"- L = {L_km:.1f} km")
         st.markdown(f"- α = {alpha:.3f} dB/km")
         st.markdown(f"- Dch = {Dch:.1f} ps/nm/km")
+        if bandwidth_distance_MHz_km > 0:
+            st.markdown(f"- B·L = {bandwidth_distance_MHz_km:.1f} MHz·km")
         st.markdown(f"- {Nc} connecteurs × {loss_per_conn:.2f} dB")
         st.markdown(f"- {Ns} épissures × {loss_per_splice:.3f} dB")
+        st.markdown(f"- Autres pertes = {other_losses_db:.2f} dB")
     with col_r:
         st.markdown("**Récepteur**")
         st.markdown(f"- Détecteur : {detector}")
@@ -559,59 +609,16 @@ with tab2:
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-# ---- Tab 3: Refractive index n(λ) ----
-with tab3:
-    lam_um = np.linspace(0.4, 2.0, 800)
-    n_arr = sellmeier_index(lam_um)
-    lam_nm_arr = lam_um * 1000
-
-    fig3 = go.Figure()
-
-    fig3.add_trace(go.Scatter(
-        x=lam_nm_arr, y=n_arr,
-        mode='lines', name='n(λ) Silice pure',
-        line=dict(color='royalblue', width=2),
-    ))
-
-    # Mark telecom windows
-    windows = {850: 'rgba(255,165,0,0.3)', 1300: 'rgba(0,200,0,0.3)', 1550: 'rgba(255,0,0,0.2)'}
-    window_labels = {850: "1ère fenêtre\n850 nm", 1300: "2ème fenêtre\n1300 nm", 1550: "3ème fenêtre\n1550 nm"}
-    for wl, color in windows.items():
-        n_wl = float(sellmeier_index(wl / 1000))
-        fig3.add_vline(x=wl, line_dash='dash', line_color=color.replace('0.3', '1').replace('0.2', '1'),
-                       annotation_text=f"{wl} nm\nn={n_wl:.4f}",
-                       annotation_position="top right" if wl < 1400 else "top left",
-                       annotation_font_size=10)
-
-    # Highlight selected wavelength
-    fig3.add_trace(go.Scatter(
-        x=[lambda_nm], y=[n_at_lambda],
-        mode='markers', name=f'λ sélectionné = {lambda_nm:.0f} nm',
-        marker=dict(color='orange', size=12, symbol='star'),
-    ))
-
-    fig3.update_layout(
-        title="Indice de réfraction de la silice — Équation de Sellmeier",
-        xaxis_title="Longueur d'onde λ (nm)",
-        yaxis_title="Indice de réfraction n(λ)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hovermode="x unified",
-        height=450,
-    )
-    st.plotly_chart(fig3, use_container_width=True)
-
 # ---------------------------------------------------------------------------
 # Footer formulas
 # ---------------------------------------------------------------------------
 with st.expander("📐 Formulaire — Rappel des équations"):
     st.markdown(r"""
 **Bilan de puissance**
-$$P_r = P_e - L_{couplage} - \alpha L - N_c \times 0.5 - N_s \times 0.3 \quad \text{[dBm]}$$
+$$P_r = P_e - L_{couplage} - \alpha L - N_c L_c - N_s L_s - L_{autres} \quad \text{[dBm]}$$
 $$\text{Marge} = P_r - P_{sensibilité}$$
 
-**Couplage** : $R = \frac{ON^2}{2}$ → perte $= -10\log_{10}(R)$ dB
-
-**Sensibilité** : PIN → $-53 + 10\log_{10}(f_{\text{MHz}})$ dBm · APD → $-67 + 10\log_{10}(f_{\text{MHz}})$ dBm
+**Catalogue exercice** : PIN = $-52$ dBm · PIIPN = $-64$ dBm
 
 ---
 
@@ -625,11 +632,5 @@ $$\text{Marge} = P_r - P_{sensibilité}$$
 
 **Bande passante** : $BP = \frac{0.7}{\Delta\tau}$ [GHz]
 
----
-
-**Équation de Sellmeier** :
-$$n^2(\lambda) = 1 + \frac{A_0\lambda^2}{\lambda^2-\lambda_0^2} + \frac{A_1\lambda^2}{\lambda^2-\lambda_1^2} + \frac{A_2\lambda^2}{\lambda^2-\lambda_2^2}$$
-$A = [0.6961663,\ 0.4079426,\ 0.8974794]$ · $\lambda_i = [0.0684,\ 0.1162,\ 9.896]\ \mu m$
-
-**Ouverture numérique** : $ON = \sqrt{n_1^2 - n_2^2}$
+**Produit bande passante-distance** : $BP \times L = \mathrm{constante}$, donc $BP(L)=\frac{B \cdot L}{L}$
 """)

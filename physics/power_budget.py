@@ -16,6 +16,7 @@ class LinkConfig:
     loss_per_splice_db: float           # Loss per splice (dB)
     coupler_loss_laser_db: float        # Laser-fiber coupler loss (dB)
     coupler_loss_detector_db: float     # Fiber-detector coupler loss (dB)
+    other_losses_db: float              # Additional lumped losses (dB)
     NA: float                           # Numerical aperture (display only)
     detector: str                       # 'PIN', 'APD', or 'Manuel'
     bitrate_GHz: float                  # Bitrate (GHz)
@@ -29,6 +30,7 @@ class PowerBudgetResult:
     A_splices_db: float             # Total splice loss (dB)
     coupler_loss_laser_db: float    # Laser-fiber coupler loss (dB)
     coupler_loss_detector_db: float # Fiber-detector coupler loss (dB)
+    other_losses_db: float          # Additional lumped losses (dB)
     A_total_db: float               # Sum of all losses (dB)
     Pr_dbm: float                   # Received power (dBm)
     sensitivity_dbm: float          # Detector sensitivity threshold (dBm)
@@ -56,9 +58,10 @@ def receiver_sensitivity(detector: str, bitrate_GHz: float,
     """
     Minimum detectable power in dBm.
     If override_dbm is set, returns it directly (manual input mode).
-    Otherwise uses standard formulas (bitrate in MHz):
-      PIN: -53 + 10*log10(f_MHz)
-      APD: -67 + 10*log10(f_MHz)
+    For the exercise presets:
+      PIN: -52 dBm
+      PIIPN/APD: -64 dBm
+    Otherwise falls back to the generic formulas.
     """
     if override_dbm is not None:
         return override_dbm
@@ -80,7 +83,8 @@ def compute_power_budget(config: LinkConfig) -> PowerBudgetResult:
     A_spl = splice_loss(config.Ns, config.loss_per_splice_db)
 
     A_total = (A_fiber + A_conn + A_spl
-               + config.coupler_loss_laser_db + config.coupler_loss_detector_db)
+               + config.coupler_loss_laser_db + config.coupler_loss_detector_db
+               + config.other_losses_db)
     Pr = config.Pe_dbm - A_total
 
     sens = receiver_sensitivity(config.detector, config.bitrate_GHz,
@@ -93,6 +97,7 @@ def compute_power_budget(config: LinkConfig) -> PowerBudgetResult:
         A_splices_db=A_spl,
         coupler_loss_laser_db=config.coupler_loss_laser_db,
         coupler_loss_detector_db=config.coupler_loss_detector_db,
+        other_losses_db=config.other_losses_db,
         A_total_db=A_total,
         Pr_dbm=Pr,
         sensitivity_dbm=sens,
@@ -105,5 +110,6 @@ def power_vs_distance(config: LinkConfig, L_array: np.ndarray) -> np.ndarray:
     """Received power (dBm) as a function of distance array (km)."""
     fixed_losses = (config.coupler_loss_laser_db + config.coupler_loss_detector_db
                     + connector_loss(config.Nc, config.loss_per_connector_db)
-                    + splice_loss(config.Ns, config.loss_per_splice_db))
+                    + splice_loss(config.Ns, config.loss_per_splice_db)
+                    + config.other_losses_db)
     return config.Pe_dbm - fixed_losses - config.alpha_db_km * L_array
