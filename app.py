@@ -3,7 +3,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-from physics.power_budget import LinkConfig, compute_power_budget, power_vs_distance
+from physics.power_budget import (
+    LinkConfig,
+    compute_power_budget,
+    power_vs_distance,
+    power_vs_distance_stepped,
+    event_positions_uniform,
+)
 from physics.dispersion import FiberType, DispersionConfig, compute_dispersion, dispersion_vs_distance
 from physics.link_length import compute_max_length
 
@@ -437,9 +443,64 @@ with tab0:
         st.markdown(f"- Marge = {pb.margin_db:+.2f} dB")
 
 with tab1:
+    c_mode, c_opt = st.columns([3, 2])
+    with c_mode:
+        curve_mode = st.radio(
+            "Modèle de courbe",
+            ["Linéaire (simplifié)", "Avec cassures (connecteurs/épissures)"],
+            horizontal=True,
+            key="power_curve_mode",
+        )
+    with c_opt:
+        show_event_guides = st.checkbox("Afficher guides C/S", value=False)
+
+    if curve_mode == "Avec cassures (connecteurs/épissures)":
+        Pr_curve = power_vs_distance_stepped(link_cfg, L_plot)
+        conn_positions = event_positions_uniform(L_km, int(Nc))
+        spl_positions = event_positions_uniform(L_km, int(Ns))
+
+        x_max_trace = float(L_plot[-1])
+        fixed_no_events = (
+            link_cfg.coupler_loss_laser_db
+            + link_cfg.coupler_loss_detector_db
+            + link_cfg.other_losses_db
+        )
+
+        event_pairs = [(float(p), float(link_cfg.loss_per_connector_db)) for p in conn_positions if p <= x_max_trace]
+        event_pairs += [(float(p), float(link_cfg.loss_per_splice_db)) for p in spl_positions if p <= x_max_trace]
+        event_pairs.sort(key=lambda t: t[0])
+
+        trace_x = [0.0]
+        trace_y = [link_cfg.Pe_dbm - fixed_no_events]
+        cum_event_loss = 0.0
+        i = 0
+        while i < len(event_pairs):
+            x_evt = event_pairs[i][0]
+            loss_here = 0.0
+            while i < len(event_pairs) and abs(event_pairs[i][0] - x_evt) < 1e-12:
+                loss_here += event_pairs[i][1]
+                i += 1
+
+            y_before = link_cfg.Pe_dbm - fixed_no_events - link_cfg.alpha_db_km * x_evt - cum_event_loss
+            trace_x.append(x_evt)
+            trace_y.append(y_before)
+            cum_event_loss += loss_here
+            trace_x.append(x_evt)
+            trace_y.append(y_before - loss_here)
+
+        y_end = link_cfg.Pe_dbm - fixed_no_events - link_cfg.alpha_db_km * x_max_trace - cum_event_loss
+        trace_x.append(x_max_trace)
+        trace_y.append(y_end)
+    else:
+        Pr_curve = Pr_arr
+        conn_positions = np.array([], dtype=float)
+        spl_positions = np.array([], dtype=float)
+        trace_x = L_plot
+        trace_y = Pr_curve
+
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(
-        x=L_plot, y=Pr_arr,
+        x=trace_x, y=trace_y,
         mode="lines", name="Puissance reçue Pr(L)",
         line=dict(color="royalblue", width=2),
     ))
@@ -450,19 +511,44 @@ with tab1:
                    annotation_position="bottom right")
     fig1.add_vline(x=L_km, line_dash="dot", line_color="orange",
                    annotation_text=f"L = {L_km} km", annotation_position="top left")
-    infeasible_mask = Pr_arr < pb.sensitivity_dbm
+
+    def thin_positions(pos: np.ndarray, max_n: int = 24) -> np.ndarray:
+        if pos.size <= max_n:
+            return pos
+        idx = np.linspace(0, pos.size - 1, max_n, dtype=int)
+        return pos[idx]
+
+    if show_event_guides and curve_mode == "Avec cassures (connecteurs/épissures)":
+        conn_show = thin_positions(conn_positions, max_n=18)
+        spl_show = thin_positions(spl_positions, max_n=18)
+        for pos in conn_show:
+            fig1.add_vline(x=float(pos), line_dash="dot", line_color="#B8860B", opacity=0.20)
+        for pos in spl_show:
+            fig1.add_vline(x=float(pos), line_dash="dot", line_color="#FF6600", opacity=0.16)
+
+    infeasible_mask = Pr_curve < pb.sensitivity_dbm
+    L_cross = None
     if infeasible_mask.any():
-        L_cross = np.interp(pb.sensitivity_dbm, Pr_arr[::-1], L_plot[::-1])
+        L_cross = np.interp(pb.sensitivity_dbm, Pr_curve[::-1], L_plot[::-1])
         fig1.add_vrect(x0=L_cross, x1=L_plot[-1], fillcolor="red", opacity=0.08,
                        layer="below", line_width=0, annotation_text="Zone infaisable",
                        annotation_position="top right")
+
+    x_max_view = min(float(L_plot[-1]), max(20.0, float(L_km) * 1.6))
+    if L_cross is not None:
+        x_max_view = min(float(L_plot[-1]), max(x_max_view, float(L_cross) * 1.15))
+    visible_mask = L_plot <= x_max_view
+    y_visible = Pr_curve[visible_mask]
+    y_min = float(min(np.min(y_visible), pb.sensitivity_dbm) - 12.0)
+    y_max = float(max(np.max(y_visible), Pe_dbm) + 12.0)
+
     fig1.update_layout(
         title="Puissance reçue en fonction de la distance",
-        xaxis_title="Distance L (km)",
-        yaxis_title="Puissance (dBm)",
+        xaxis=dict(title="Distance L (km)", range=[0.0, x_max_view]),
+        yaxis=dict(title="Puissance (dBm)", range=[y_min, y_max]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         hovermode="x unified",
-        height=450,
+        height=560,
     )
     st.plotly_chart(fig1, use_container_width=True)
 

@@ -113,3 +113,40 @@ def power_vs_distance(config: LinkConfig, L_array: np.ndarray) -> np.ndarray:
                     + splice_loss(config.Ns, config.loss_per_splice_db)
                     + config.other_losses_db)
     return config.Pe_dbm - fixed_losses - config.alpha_db_km * L_array
+
+
+def event_positions_uniform(L_km: float, count: int) -> np.ndarray:
+    """Uniformly distributes `count` events inside ]0, L_km[."""
+    if count <= 0 or L_km <= 0:
+        return np.array([], dtype=float)
+    return np.linspace(0.0, float(L_km), int(count) + 2, dtype=float)[1:-1]
+
+
+def power_vs_distance_stepped(
+    config: LinkConfig,
+    L_array: np.ndarray,
+    connector_positions_km: Optional[np.ndarray] = None,
+    splice_positions_km: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """
+    Received power profile (dBm) with local drops at connector/splice positions.
+    Coupler and other losses remain lumped fixed losses.
+    """
+    L_vals = np.asarray(L_array, dtype=float)
+    conn_pos = (event_positions_uniform(config.L_km, config.Nc)
+                if connector_positions_km is None
+                else np.sort(np.asarray(connector_positions_km, dtype=float)))
+    spl_pos = (event_positions_uniform(config.L_km, config.Ns)
+               if splice_positions_km is None
+               else np.sort(np.asarray(splice_positions_km, dtype=float)))
+
+    fixed_losses = (
+        config.coupler_loss_laser_db
+        + config.coupler_loss_detector_db
+        + config.other_losses_db
+    )
+
+    conn_cum = np.searchsorted(conn_pos, L_vals, side='right') * config.loss_per_connector_db
+    spl_cum = np.searchsorted(spl_pos, L_vals, side='right') * config.loss_per_splice_db
+
+    return config.Pe_dbm - fixed_losses - config.alpha_db_km * L_vals - conn_cum - spl_cum
