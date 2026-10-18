@@ -20,3 +20,7 @@ env/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Deployment metadata
+.vercel/
+site/.openai/

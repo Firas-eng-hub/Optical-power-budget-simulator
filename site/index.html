@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Simulateur interactif de liaison optique : bilan de puissance, dispersion et estimation de longueur maximale.">
+  <title>Optical Lab — Simulateur de liaison optique</title>
+  <link rel="stylesheet" href="styles.css"><script defer src="model.js"></script><script defer src="app.js"></script>
+</head>
+<body>
+<header><a class="brand" href="/">◉ <span>OPTICAL<span class="accent">/</span>LAB</span></a><a href="https://github.com/Firas-eng-hub/Optical-power-budget-simulator" target="_blank" rel="noopener">Code source ↗</a></header>
+<div class="layout">
+<aside><div class="panel-title">Configuration <button id="reset" type="button">Réinitialiser</button></div><form id="parameters">
+<fieldset><legend>01 / Émetteur</legend>
+<label>Source<select id="source"><option>LED</option><option>LASER</option></select></label>
+<label>Fenêtre optique<select id="wavelengthPreset"><option value="850">850 nm</option><option value="1300">1300 nm</option><option value="1550">1550 nm</option><option value="custom">Personnalisée</option></select></label>
+<label>Longueur d’onde (nm)<input id="wavelength" type="number" min="400" max="2000" step="1" value="850" required></label>
+<div class="pair"><label>Puissance (dBm)<input id="power" type="number" min="-20" max="20" step="0.1" value="0" required></label><label>Δλ (nm)<input id="width" type="number" min="0.1" max="100" step="0.1" value="40" required></label></div>
+</fieldset>
+<fieldset><legend>02 / Fibre optique</legend>
+<label>Type de fibre<select id="fiber"><option value="step">Multimode · saut d’indice</option><option value="graded">Multimode · gradient d’indice</option><option value="single">Monomode</option></select></label>
+<label>Longueur (km)<input id="length" type="number" min="0.1" max="300" step="0.1" value="15" required></label>
+<div class="pair"><label>α (dB/km)<input id="alpha" type="number" min="0.01" max="10" step="0.01" value="5" required></label><label>Dch (ps/nm/km)<input id="dispersion" type="number" min="-200" max="200" step="0.1" value="80" required></label></div>
+</fieldset>
+<fieldset><legend>03 / Pertes & connexions</legend>
+<div class="pair"><label>Couplage source (dB)<input id="sourceCoupler" type="number" min="0" max="40" step="0.1" value="17" required></label><label>Couplage détecteur (dB)<input id="detectorCoupler" type="number" min="0" max="20" step="0.1" value="1" required></label></div>
+<div class="pair"><label>Connecteurs<input id="connectors" type="number" min="0" max="50" step="1" value="2" required></label><label>Perte / connecteur (dB)<input id="connectorLoss" type="number" min="0" max="5" step="0.01" value="1" required></label></div>
+<label>Comptage épissures<select id="spliceMode"><option value="manual">Nombre manuel</option><option value="spacing">Espacement</option><option value="reels">Rouleaux</option></select></label>
+<label id="splicesField">Épissures<input id="splices" type="number" min="0" max="500" step="1" value="11" required></label>
+<label id="spacingField" hidden>Espacement (m)<input id="spacing" type="number" min="10" max="5000" step="1" value="200" required></label>
+<label id="reelField" hidden>Longueur rouleau (km)<input id="reel" type="number" min="0.1" max="50" step="0.1" value="1" required></label>
+<div class="pair"><label>Perte / épissure (dB)<input id="spliceLoss" type="number" min="0" max="2" step="0.01" value="0.3" required></label><label>Autres pertes (dB)<input id="otherLoss" type="number" min="0" max="50" step="0.1" value="0" required></label></div>
+</fieldset>
+<fieldset><legend>04 / Récepteur</legend>
+<label>Détecteur<select id="detector"><option>PIN</option><option>PIIPN</option><option value="manual">Sensibilité manuelle</option></select></label>
+<label id="sensitivityField" hidden>Sensibilité (dBm)<input id="sensitivity" type="number" min="-80" max="0" step="0.1" value="-40" required></label>
+<label>Bande passante cible (GHz)<input id="target" type="number" min="0.001" max="100" step="0.001" value="0.002" required></label>
+</fieldset></form></aside>
+<main><div class="eyebrow">FIBRE OPTIQUE / SIMULATION INTERACTIVE</div><h1>Chaque décibel compte.</h1><p class="intro">Explorez votre liaison optique. Ajustez les paramètres et observez le bilan de puissance et la dispersion en temps réel.</p>
+<div class="status" id="status" role="status" aria-live="polite"></div>
+<section class="metrics" aria-label="Résultats"><article><span>Puissance reçue</span><strong id="received"></strong><small id="threshold"></small></article><article><span>Marge de puissance</span><strong id="margin"></strong><small>Pr − sensibilité</small></article><article><span>Bande passante</span><strong id="bandwidth"></strong><small id="broadening"></small></article><article><span>Longueur max. estimée</span><strong id="maxLength"></strong><small id="limiting"></small></article></section>
+<section class="card"><div class="card-heading"><h2>Chaîne de transmission</h2><span id="chainMeta"></span></div><div class="chain"><div><small>ÉMETTEUR</small><strong id="sourceLabel"></strong><span id="injected"></span></div><div class="fiber-line"><span id="fiberLabel"></span><i></i><small id="events"></small></div><div><small>RÉCEPTEUR</small><strong id="detectorLabel"></strong><span id="receivedLabel"></span></div></div></section>
+<div class="two-col"><section class="card"><h2>Bilan de puissance</h2><table><thead><tr><th scope="col">Composant</th><th scope="col">Valeur</th></tr></thead><tbody id="losses"></tbody></table></section><section class="card"><h2>Dispersion & limites</h2><table><thead><tr><th scope="col">Paramètre</th><th scope="col">Valeur</th></tr></thead><tbody id="dispersionTable"></tbody></table></section></div>
+<section class="card"><div class="card-heading"><h2>Puissance vs distance</h2><label class="toggle"><input id="stepped" type="checkbox"> Cassures connecteurs / épissures</label></div><div id="powerChart"></div><small>Bleu : puissance reçue · rouge : sensibilité · point : liaison configurée</small></section>
+<section class="card"><h2>Dispersion vs distance</h2><div id="dispersionChart"></div><small>Violet : bande passante disponible (GHz) · rouge : cible · point : liaison configurée</small></section>
+<details class="card"><summary>Équations & hypothèses du modèle</summary><p>Pr = Pe − αL − NcLc − NsLs − pertes de couplage − autres pertes. Marge = Pr − sensibilité.</p><p>Δτch = |Dch| Δλ L ; Δτtotal = √(Δτch² + Δτmodal²) ; BPmodèle = 700 / Δτtotal (ps), en GHz. BP = min(BPmodèle, BPcatalogue).</p><p>Catalogue pédagogique : PIN −52 dBm, PIIPN −64 dBm ; B·L = 10 MHz·km (saut d’indice) et 100 MHz·km (gradient). Constantes modales : n₁ = 1,468 et Δ = 0,01.</p><p>La longueur maximale reprend l’estimation Python : pertes fixes à leur valeur configurée, dispersion chromatique et limite catalogue. La dispersion modale n’est pas incluse dans cette estimation ; vérifiez la bande passante à la longueur choisie. Les positions des connexions sont réparties uniformément pour la courbe à cassures.</p></details>
+<footer>Conçu pour le TP fibre optique · Calculs exécutés dans votre navigateur · <a href="https://github.com/Firas-eng-hub/Optical-power-budget-simulator">GitHub ↗</a></footer>
+</main></div></body></html>
